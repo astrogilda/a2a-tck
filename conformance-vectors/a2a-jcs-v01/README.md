@@ -82,14 +82,19 @@ re-serialize the file with the same key order, then hash what remains.
 
 ## Signing
 
-This corpus is not signed yet. A future version can add a DSSE envelope over an in-toto statement,
-giving the corpus tamper evidence and a pinned revision that a third party can re-check later.
-Signing status does not block use of this corpus today. Both runners above check the corpus in full
-without a signature. A signature would add cryptographic proof that nobody altered a byte after
-publication, on top of what the runners already establish by running clean.
+This corpus is not signed yet, but the design is not hypothetical. A digest list covering every
+vector, signed offline with a static Ed25519 key committed beside the corpus and timestamped by an
+RFC 3161 authority, is what agent-evidence-vectors publishes across 461 vectors in 8 corpora at tag
+v0.10.1: https://github.com/astrogilda/agent-evidence-vectors. Nothing goes to a transparency log,
+so a consumer verifies offline. If signing lands here, that is the shape to copy.
+
+Signing status does not block use of this corpus today: both runners above check it in full without
+a signature, and a signature would add cryptographic proof that nobody altered a byte after
+publication, on top of what the runners establish by running clean.
 
 ## Status
 
 This corpus is offered at a2a-tck#227. giskard09 built their own canonicalizer, argentum-core, from
-the RFC 8785 text and has no tie to either a2a-python or a2a-js. giskard09 offered to run these vectors
-blind against argentum-core once the non-gated set existed, and that set exists now.
+the RFC 8785 text and has no tie to either a2a-python or a2a-js. They ran these 57 vectors blind
+against it on 2026-08-20, before opening the generators, and reported 57 of 57:
+https://github.com/a2aproject/a2a-tck/pull/228#issuecomment-5359047401.
