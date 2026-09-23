@@ -55,17 +55,32 @@ func stripSignatures(m map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+// signingBytes returns the bytes a card signature covers: drop `signatures`
+// (rule 3), then RFC 8785. Swap it for another implementation's signing path
+// to test that path. The rule-3 vectors in both directions go through it, so an
+// implementation that keeps `signatures` through canonicalization fails them.
+func signingBytes(card map[string]interface{}) ([]byte, error) {
+	raw, err := json.Marshal(stripSignatures(card))
+	if err != nil {
+		return nil, err
+	}
+	return jcs.Transform(raw)
+}
+
 func checkVector(v vector) (bool, string) {
 	if v.Disposition == "MUST-ACCEPT" {
-		obj := v.Input
+		var out []byte
+		var err error
 		if v.Clause == "a2a-spec-8.4.1-rule-3" {
-			obj = stripSignatures(obj)
+			out, err = signingBytes(v.Input)
+		} else {
+			var raw []byte
+			raw, err = json.Marshal(v.Input)
+			if err != nil {
+				return false, "could not re-marshal input: " + err.Error()
+			}
+			out, err = jcs.Transform(raw)
 		}
-		raw, err := json.Marshal(obj)
-		if err != nil {
-			return false, "could not re-marshal input: " + err.Error()
-		}
-		out, err := jcs.Transform(raw)
 		if err != nil {
 			return false, "canonicalization errored, expected success: " + err.Error()
 		}
@@ -84,10 +99,18 @@ func checkVector(v vector) (bool, string) {
 		if err := json.Unmarshal([]byte(v.InputRaw), &obj); err != nil {
 			return false, "could not parse input_raw: " + err.Error()
 		}
-		if _, has := obj["signatures"]; has {
-			return true, "correctly detected forbidden 'signatures' key"
+		// The input is presented AS a card's canonical signing bytes. A verifier
+		// recomputes the signing bytes from the parsed card and refuses when they
+		// differ. That comparison runs the implementation under test; a check on
+		// the fixture alone would pass whatever the implementation does.
+		out, err := signingBytes(obj)
+		if err != nil {
+			return false, "signing path errored on well-formed input: " + err.Error()
 		}
-		return false, "failed to detect the violation this vector carries"
+		if string(out) != v.InputRaw {
+			return true, "correctly refused: not this card's signing bytes"
+		}
+		return false, "accepted claimed-canonical bytes that still carry 'signatures'"
 	}
 	if _, err := jcs.Transform([]byte(v.InputRaw)); err != nil {
 		return true, "correctly refused: " + err.Error()

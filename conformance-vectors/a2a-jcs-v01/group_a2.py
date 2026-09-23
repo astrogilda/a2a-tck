@@ -21,9 +21,11 @@ oracle harness would test the wrong thing:
   MUST-REJECT vectors test the CONSUMPTION direction: a byte string
   presented AS the canonical form that still contains a `signatures` key
   violates the exclusion invariant and a conformant verifier must refuse
-  it before ever reaching RFC 8785 byte comparison. This is a structural
-  check (does the claimed-canonical string still carry `signatures`), not
-  an RFC-8785-well-formedness check, which is why it does not go through
+  it. A runner checks this by recomputing the card's signing bytes with the
+  implementation under test and refusing when they differ from the
+  presented bytes; an implementation that keeps `signatures` recomputes the
+  presented bytes exactly and fails the vector. It is not an
+  RFC-8785-well-formedness check, which is why it does not go through
   make_reject's oracle-refusal path -- both oracles would happily
   canonicalize a JSON object that happens to have a `signatures` key,
   because RFC 8785 does not forbid it. a2a's OWN rule does.
@@ -79,6 +81,17 @@ def _make_reject_signatures_present(
         raise RuntimeError(
             f"{vid}: this is not actually a violating example -- fix the fixture"
         )
+    # The vector must discriminate: the presented bytes are exactly what a
+    # signing path that skips rule 3 emits, and never what one that applies it
+    # emits. Otherwise a runner comparing recomputed signing bytes against the
+    # presented bytes would pass or fail regardless of the implementation.
+    if py_canonical(obj) != claimed_canonical_bytes:
+        raise RuntimeError(
+            f"{vid}: the fixture is not the RFC 8785 form of its own card, so an "
+            "implementation that keeps `signatures` would not reproduce it"
+        )
+    if py_canonical(_strip_signatures(obj)) == claimed_canonical_bytes:
+        raise RuntimeError(f"{vid}: the fixture equals the correct signing bytes")
     vector = {
         "id": vid,
         "clause": "a2a-spec-8.4.1-rule-3",

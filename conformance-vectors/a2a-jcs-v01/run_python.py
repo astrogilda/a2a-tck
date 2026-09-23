@@ -9,6 +9,8 @@ that substitution is the entire point of a runner separate from the
 generator.
 """
 
+from __future__ import annotations
+
 import json
 import sys
 
@@ -32,13 +34,22 @@ def canonicalize(obj: object) -> bytes | None:
         return None
 
 
+def signing_bytes(card: dict) -> bytes | None:
+    """The bytes a card signature covers: drop `signatures` (rule 3), then RFC 8785.
+
+    Swap this function for another implementation's signing path to test that
+    path. The rule-3 vectors in both directions go through it, so an
+    implementation that keeps `signatures` through canonicalization fails them.
+    """
+    return canonicalize({k: val for k, val in card.items() if k != "signatures"})
+
+
 def check_vector(v: dict) -> tuple[bool, str]:
     """Check one vector record against this runner's oracle."""
     if v["disposition"] == "MUST-ACCEPT":
         obj = v["input"]
-        if v["clause"] == "a2a-spec-8.4.1-rule-3":
-            obj = {k: val for k, val in obj.items() if k != "signatures"}
-        out = canonicalize(obj)
+        rule3 = v["clause"] == "a2a-spec-8.4.1-rule-3"
+        out = signing_bytes(obj) if rule3 else canonicalize(obj)
         if out is None:
             return False, "canonicalization raised, expected success"
         want = bytes.fromhex(v["expected"]["canonical_utf8_hex"])
@@ -47,10 +58,17 @@ def check_vector(v: dict) -> tuple[bool, str]:
         return True, "ok"
     # MUST-REJECT
     if v["clause"] == "a2a-spec-8.4.1-rule-3":
-        obj = json.loads(v["input_raw"])
-        if "signatures" in obj:
-            return True, "correctly detected forbidden 'signatures' key"
-        return False, "failed to detect the violation this vector carries"
+        # The input is presented AS a card's canonical signing bytes. A verifier
+        # recomputes the signing bytes from the parsed card and refuses when they
+        # differ. That comparison runs the implementation under test; a check on
+        # the fixture alone would pass whatever the implementation does.
+        raw = v["input_raw"].encode("utf-8")
+        out = signing_bytes(json.loads(raw))
+        if out is None:
+            return False, "signing path raised on well-formed input"
+        if out != raw:
+            return True, "correctly refused: not this card's signing bytes"
+        return False, "accepted claimed-canonical bytes that still carry 'signatures'"
     try:
         obj = json.loads(v["input_raw"])
     except json.JSONDecodeError:
