@@ -138,6 +138,22 @@ class TestCorpusIntegrity:
         ).hexdigest()
         assert recomputed == stored, f"manifest body hashes to {recomputed}, but it carries {stored}"
 
+    def test_targets_split_the_corpus_by_function(self) -> None:
+        """CARD-SIGN-001: the manifest names which function each vector tests.
+
+        The RFC 8785 primitive owns every clause but rule 3; the signing path
+        owns every vector, because a card with no ``signatures`` field signs as
+        its canonical form.  A run scored against the wrong function reports a
+        number about neither.
+        """
+        targets = MANIFEST["targets"]
+        clauses = {v["clause"] for v in VECTORS}
+        assert set(targets["rfc8785"]["clauses"]) == clauses - {SIGNATURES_EXCLUSION_CLAUSE}
+        assert set(targets["card-signing-input"]["clauses"]) == clauses
+        for name, target in targets.items():
+            owned = [v for v in VECTORS if v["clause"] in target["clauses"]]
+            assert len(owned) == target["vectors"], f"{name}: manifest says {target['vectors']}, found {len(owned)}"
+
     def test_counts_match_the_manifest(self) -> None:
         """CARD-SIGN-001: the loaded vector counts match the manifest's own tally.
 

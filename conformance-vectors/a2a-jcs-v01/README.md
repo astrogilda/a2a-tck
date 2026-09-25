@@ -57,21 +57,60 @@ requires that same double refusal before it will write any reject vector at all.
 
 ## How to verify this corpus
 
+The corpus tests two functions, and MANIFEST.json names them under `targets`. Score each
+implementation against the function it provides:
+
+| Target | Function | Vectors |
+|---|---|---:|
+| `rfc8785` | an RFC 8785 primitive: one JSON value to canonical bytes | 53 (A3 to A6) |
+| `card-signing-input` | the bytes a card signature covers: the card without its top-level `signatures` field, canonicalized | 57 (all) |
+
+The four A2 vectors test rule 3, which RFC 8785 has no notion of, so a primitive that is correct
+fails them by design. A card with no `signatures` field signs as its canonical form, so the
+signing path owns the RFC 8785 vectors as well. A run scored against the wrong target reports a
+number about neither function.
+
 Run the Python reference runner from the repository root:
 
     pip install rfc8785
     python3 conformance-vectors/a2a-jcs-v01/run_python.py
+
+To test another Python implementation, name its functions instead of editing the runner, so the
+record comes from an unmodified runner at a known commit:
+
+    python3 conformance-vectors/a2a-jcs-v01/run_python.py --canonicalize mypkg.jcs:canonicalize
+    python3 conformance-vectors/a2a-jcs-v01/run_python.py --signing-bytes mypkg.card:signing_bytes \
+        --refusal mypkg.jcs:JCSError
+
+A target whose function is not given is listed under `targetsNotRun` with its vector count. It is
+never run through the reference, because a signing path assembled from someone else's primitive
+would test this runner's rule-3 handling rather than theirs. `--refusal` names the exception an
+implementation raises to refuse input (repeatable, default `ValueError`).
 
 Run the Go reference runner:
 
     cd conformance-vectors/a2a-jcs-v01/oracle-go && go build -o /tmp/a2a-runner ./runner/
     /tmp/a2a-runner /path/to/conformance-vectors/a2a-jcs-v01
 
-Each runner prints one JSON result record. The record holds the corpus digest, the spec commit,
-a pass or fail mark per vector, and a coverage count. Each runner exits with a non-zero code on any
-failure. Two scripts in this same directory can regenerate the corpus and its manifest:
-gen_layer_a.py and gen_manifest.py, and both re-check every vector against both oracles on every
-run, so a stale or hand-edited vector gets overwritten the next time either one runs.
+Both runners print one JSON record of the same shape: the corpus digest, the spec commit, a tally
+per target, and one outcome per vector per target. Only `pass` passes:
+
+| Outcome | Disposition | Meaning |
+|---|---|---|
+| `diverged` | MUST-ACCEPT | returned bytes other than the expected ones, silently |
+| `refused` | MUST-ACCEPT | raised a declared refusal instead of producing bytes |
+| `accepted` | MUST-REJECT | returned bytes for input that has no canonical form, or reproduced signing bytes that still carry `signatures` |
+| `errored` | either | raised something other than a declared refusal, or could not be asked |
+
+`diverged` is the outcome that breaks signatures between implementations without an error, so
+it is counted apart from `refused`, which fails closed. Each runner exits 0 when at least one
+target ran and every vector in it passed, 1 on any failure, and 2 when the corpus or an option
+could not be used.
+
+Two scripts in this directory regenerate the corpus. gen_layer_a.py rebuilds every vector and
+re-checks it against both oracles on every run, so a stale or hand-edited vector is overwritten
+the next time it runs. gen_manifest.py rebuilds MANIFEST.json, its `targets` block and the
+corpus digest from the vector files.
 
 ## Manifest and digest
 

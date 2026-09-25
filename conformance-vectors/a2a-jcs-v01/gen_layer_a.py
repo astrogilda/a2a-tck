@@ -7,8 +7,8 @@ via the jcsoracle Go binary) and asserting byte-for-byte agreement -- never
 hand-written or guessed. A vector whose oracles disagree is a hard error,
 not a vector.
 
-Every MUST-REJECT vector is checked against at least one oracle actually
-refusing the input (not asserted by description alone).
+Every MUST-REJECT vector needs BOTH oracles to refuse the input; one
+refusal alone is a hard error, not a vector.
 """
 
 from __future__ import annotations

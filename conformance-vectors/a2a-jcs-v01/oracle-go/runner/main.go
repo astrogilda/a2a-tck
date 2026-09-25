@@ -3,6 +3,14 @@
 // corpus was cross-checked against at generation time. Two runners in two
 // languages exist so the vectors are demonstrably not encoding one
 // implementation's habits.
+//
+// The corpus tests two functions, named under "targets" in MANIFEST.json: an
+// RFC 8785 primitive ("rfc8785", the RFC 8785 vectors) and the bytes an Agent
+// Card signature covers ("card-signing-input", every vector). The record this
+// runner prints has the same shape as run_python.py's, one tally per target
+// and one outcome per vector: pass, diverged (wrong bytes on a MUST-ACCEPT
+// vector), refused (an error on a MUST-ACCEPT vector), accepted (bytes for a
+// MUST-REJECT vector) or errored (the runner could not ask the implementation).
 package main
 
 import (
@@ -16,14 +24,22 @@ import (
 	"github.com/gowebpki/jcs"
 )
 
-const specCommitPinned = "19598c4" // a2a-protocol.org/A2A commit this corpus's clauses were read from
+const (
+	specCommitPinned          = "19598c4" // a2a-protocol.org/A2A commit this corpus's clauses were read from
+	signaturesExclusionClause = "a2a-spec-8.4.1-rule-3"
+)
+
+var (
+	targetOrder = []string{"rfc8785", "card-signing-input"}
+	outcomes    = []string{"pass", "diverged", "refused", "accepted", "errored"}
+)
 
 type vector struct {
-	ID          string                 `json:"id"`
-	Clause      string                 `json:"clause"`
-	Disposition string                 `json:"disposition"`
-	Input       map[string]interface{} `json:"input,omitempty"`
-	InputRaw    string                 `json:"input_raw,omitempty"`
+	ID          string          `json:"id"`
+	Clause      string          `json:"clause"`
+	Disposition string          `json:"disposition"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	InputRaw    string          `json:"input_raw,omitempty"`
 	Expected    struct {
 		CanonicalUTF8Hex string `json:"canonical_utf8_hex"`
 	} `json:"expected"`
@@ -33,89 +49,99 @@ type manifestEntry struct {
 	Path string `json:"path"`
 }
 
+type target struct {
+	Function string   `json:"function"`
+	Clauses  []string `json:"clauses"`
+	Vectors  int      `json:"vectors"`
+}
+
 type manifest struct {
-	CorpusDigest string          `json:"corpusDigest"`
-	Vectors      []manifestEntry `json:"vectors"`
+	CorpusDigest string            `json:"corpusDigest"`
+	Targets      map[string]target `json:"targets"`
+	Vectors      []manifestEntry   `json:"vectors"`
 }
 
 type result struct {
-	ID     string `json:"id"`
-	Pass   bool   `json:"pass"`
-	Detail string `json:"detail"`
+	Target  string `json:"target"`
+	ID      string `json:"id"`
+	Outcome string `json:"outcome"`
+	Detail  string `json:"detail"`
 }
 
-func stripSignatures(m map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(m))
-	for k, v := range m {
-		if k == "signatures" {
-			continue
-		}
-		out[k] = v
-	}
-	return out
+type tally struct {
+	Vectors  int            `json:"vectors"`
+	Passed   int            `json:"passed"`
+	Failed   int            `json:"failed"`
+	Outcomes map[string]int `json:"outcomes"`
 }
 
-// signingBytes returns the bytes a card signature covers: drop `signatures`
-// (rule 3), then RFC 8785. Swap it for another implementation's signing path
-// to test that path. The rule-3 vectors in both directions go through it, so an
-// implementation that keeps `signatures` through canonicalization fails them.
-func signingBytes(card map[string]interface{}) ([]byte, error) {
-	raw, err := json.Marshal(stripSignatures(card))
-	if err != nil {
-		return nil, err
-	}
+// canonicalize is the RFC 8785 primitive under test: gowebpki/jcs over the
+// JSON text of one value.
+func canonicalize(raw []byte) ([]byte, error) {
 	return jcs.Transform(raw)
 }
 
-func checkVector(v vector) (bool, string) {
+// signingBytes returns the bytes a card signature covers: drop `signatures`
+// (rule 3), then RFC 8785. The card is canonicalized before the field is
+// dropped because encoding/json decodes a lone surrogate in an object key to
+// U+FFFD without an error; canonical output is well-formed UTF-8, so decoding
+// it loses nothing, and the second pass restores RFC 8785 order and escaping.
+func signingBytes(raw []byte) ([]byte, error) {
+	canonical, err := jcs.Transform(raw)
+	if err != nil {
+		return nil, err
+	}
+	var card map[string]json.RawMessage
+	if err := json.Unmarshal(canonical, &card); err != nil {
+		return nil, err
+	}
+	delete(card, "signatures")
+	stripped, err := json.Marshal(card)
+	if err != nil {
+		return nil, err
+	}
+	return jcs.Transform(stripped)
+}
+
+func checkVector(v vector, fn func([]byte) ([]byte, error)) (string, string) {
 	if v.Disposition == "MUST-ACCEPT" {
-		var out []byte
-		var err error
-		if v.Clause == "a2a-spec-8.4.1-rule-3" {
-			out, err = signingBytes(v.Input)
-		} else {
-			var raw []byte
-			raw, err = json.Marshal(v.Input)
-			if err != nil {
-				return false, "could not re-marshal input: " + err.Error()
-			}
-			out, err = jcs.Transform(raw)
-		}
+		out, err := fn(v.Input)
 		if err != nil {
-			return false, "canonicalization errored, expected success: " + err.Error()
+			return "refused", err.Error()
 		}
 		want, err := hex.DecodeString(v.Expected.CanonicalUTF8Hex)
 		if err != nil {
-			return false, "bad expected hex in vector file: " + err.Error()
+			return "errored", "bad expected hex in vector file: " + err.Error()
 		}
 		if string(out) != string(want) {
-			return false, fmt.Sprintf("byte mismatch: got %q want %q", out, want)
+			return "diverged", fmt.Sprintf("got %q want %q", out, want)
 		}
-		return true, "ok"
+		return "pass", "ok"
 	}
 	// MUST-REJECT
-	if v.Clause == "a2a-spec-8.4.1-rule-3" {
-		var obj map[string]interface{}
-		if err := json.Unmarshal([]byte(v.InputRaw), &obj); err != nil {
-			return false, "could not parse input_raw: " + err.Error()
-		}
-		// The input is presented AS a card's canonical signing bytes. A verifier
-		// recomputes the signing bytes from the parsed card and refuses when they
-		// differ. That comparison runs the implementation under test; a check on
-		// the fixture alone would pass whatever the implementation does.
-		out, err := signingBytes(obj)
+	out, err := fn([]byte(v.InputRaw))
+	if v.Clause == signaturesExclusionClause {
+		// The input is presented AS a card's signing bytes while still carrying
+		// `signatures`. A verifier recomputes the signing bytes from the card and
+		// refuses when they differ, so this runs the implementation; a check on
+		// the fixture alone would pass whatever it did.
 		if err != nil {
-			return false, "signing path errored on well-formed input: " + err.Error()
+			return "refused", "signing path errored on a well-formed card: " + err.Error()
 		}
 		if string(out) != v.InputRaw {
-			return true, "correctly refused: not this card's signing bytes"
+			return "pass", "refused: not this card's signing bytes"
 		}
-		return false, "accepted claimed-canonical bytes that still carry 'signatures'"
+		return "accepted", "recomputed signing bytes equal bytes that still carry 'signatures'"
 	}
-	if _, err := jcs.Transform([]byte(v.InputRaw)); err != nil {
-		return true, "correctly refused: " + err.Error()
+	if err != nil {
+		return "pass", "refused: " + err.Error()
 	}
-	return false, "accepted input that should have been refused"
+	return "accepted", fmt.Sprintf("produced %q for input with no canonical form", out)
+}
+
+func fail(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "runner: "+format+"\n", args...)
+	os.Exit(2)
 }
 
 func main() {
@@ -125,49 +151,86 @@ func main() {
 	}
 	mraw, err := os.ReadFile(filepath.Join(vroot, "MANIFEST.json"))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "read manifest:", err)
-		os.Exit(2)
+		fail("read manifest: %v", err)
 	}
 	var m manifest
 	if err := json.Unmarshal(mraw, &m); err != nil {
-		fmt.Fprintln(os.Stderr, "parse manifest:", err)
-		os.Exit(2)
+		fail("parse manifest: %v", err)
+	}
+	if len(m.Targets) != len(targetOrder) {
+		fail("manifest declares %d targets, this runner knows %v", len(m.Targets), targetOrder)
 	}
 
-	var results []result
-	passed := 0
 	entries := append([]manifestEntry(nil), m.Vectors...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	var vectors []vector
 	for _, e := range entries {
 		raw, err := os.ReadFile(filepath.Join(vroot, e.Path))
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "read vector:", e.Path, err)
-			os.Exit(2)
+			fail("read vector %s: %v", e.Path, err)
 		}
 		var v vector
 		if err := json.Unmarshal(raw, &v); err != nil {
-			fmt.Fprintln(os.Stderr, "parse vector:", e.Path, err)
-			os.Exit(2)
+			fail("parse vector %s: %v", e.Path, err)
 		}
-		ok, detail := checkVector(v)
-		if ok {
-			passed++
+		vectors = append(vectors, v)
+	}
+
+	functions := map[string]func([]byte) ([]byte, error){
+		"rfc8785":            canonicalize,
+		"card-signing-input": signingBytes,
+	}
+	targets := map[string]tally{}
+	var results []result
+	failed := 0
+	for _, name := range targetOrder {
+		t, ok := m.Targets[name]
+		if !ok {
+			fail("manifest declares no target %q", name)
 		}
-		results = append(results, result{ID: v.ID, Pass: ok, Detail: detail})
+		owns := map[string]bool{}
+		for _, c := range t.Clauses {
+			owns[c] = true
+		}
+		counts := map[string]int{}
+		for _, o := range outcomes {
+			counts[o] = 0
+		}
+		n := 0
+		for _, v := range vectors {
+			if !owns[v.Clause] {
+				continue
+			}
+			n++
+			outcome, detail := checkVector(v, functions[name])
+			counts[outcome]++
+			results = append(results, result{Target: name, ID: v.ID, Outcome: outcome, Detail: detail})
+		}
+		if n != t.Vectors {
+			fail("%s: manifest says %d vectors, found %d", name, t.Vectors, n)
+		}
+		targets[name] = tally{Vectors: n, Passed: counts["pass"], Failed: n - counts["pass"], Outcomes: counts}
+		failed += n - counts["pass"]
 	}
 
 	record := map[string]interface{}{
-		"runner":       "go/gowebpki-jcs",
-		"corpusDigest": m.CorpusDigest,
-		"specCommit":   specCommitPinned,
-		"coverage": map[string]int{
-			"total": len(results), "passed": passed, "failed": len(results) - passed,
+		"runner": "go/gowebpki-jcs",
+		"implementation": map[string]string{
+			"rfc8785":            "github.com/gowebpki/jcs Transform",
+			"card-signing-input": "reference: drop signatures, then github.com/gowebpki/jcs Transform",
 		},
-		"results": results,
+		"corpusDigest":  m.CorpusDigest,
+		"specCommit":    specCommitPinned,
+		"targets":       targets,
+		"targetsNotRun": map[string]string{},
+		"results":       results,
 	}
-	out, _ := json.MarshalIndent(record, "", "  ")
+	out, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		fail("encode record: %v", err)
+	}
 	fmt.Println(string(out))
-	if passed != len(results) {
+	if failed != 0 {
 		os.Exit(1)
 	}
 }

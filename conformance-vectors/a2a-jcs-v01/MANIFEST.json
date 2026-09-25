@@ -20,6 +20,31 @@
     "a5-number-serialization",
     "a6-arrays-nesting-literals"
   ],
+  "targets": {
+    "rfc8785": {
+      "function": "RFC 8785 canonical bytes of one JSON value",
+      "clauses": [
+        "RFC8785-3.2.1",
+        "RFC8785-3.2.2.1",
+        "RFC8785-3.2.2.2",
+        "RFC8785-3.2.2.3",
+        "RFC8785-3.2.3"
+      ],
+      "vectors": 53
+    },
+    "card-signing-input": {
+      "function": "the bytes an Agent Card signature covers: the card without its top-level signatures field, canonicalized per RFC 8785 (a2a spec 8.4.1 rules 2 and 3)",
+      "clauses": [
+        "RFC8785-3.2.1",
+        "RFC8785-3.2.2.1",
+        "RFC8785-3.2.2.2",
+        "RFC8785-3.2.2.3",
+        "RFC8785-3.2.3",
+        "a2a-spec-8.4.1-rule-3"
+      ],
+      "vectors": 57
+    }
+  },
   "vectors": [
     {
       "path": "a2-signatures-exclusion/A2-001.json",
@@ -250,5 +275,5 @@
       "sha256": "b43026c697e087b2fb62f11d21e6fe624fa1289c2778ff2efac155cf2b6250f9"
     }
   ],
-  "corpusDigest": "2ec93667b1436537a7f46cf882bae37977dc10face4bb27a2120e2d7aa824da4"
+  "corpusDigest": "29b3f2c5a9c2e6b07dc7e925b13c81563e2efd407a62ce05df513fca04e9361c"
 }
