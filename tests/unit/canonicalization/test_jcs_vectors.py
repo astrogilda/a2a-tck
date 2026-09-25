@@ -21,6 +21,11 @@ canonicalizer against outside work rather than against itself.
 A MUST-REJECT vector also asserts *where* the refusal happened.  Malformed
 input that never reaches the canonicalizer would let a canonicalizer that
 refuses nothing at all pass the whole reject half of the corpus.
+
+Every verdict here has to depend on the TCK's own functions.  The negative
+controls at the end run the same checks against a signing path that keeps
+``signatures`` and assert that each rule-3 vector then fails, so a check that
+passes by inspecting the fixture cannot come back unnoticed.
 """
 
 from __future__ import annotations
@@ -29,18 +34,21 @@ import hashlib
 import json
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from tck.canonicalization.jcs import (
     CanonicalizationError,
-    assert_signatures_excluded,
     canonicalize,
     canonicalize_agent_card,
 )
 from tck.requirements.registry import get_requirement_by_id
 from tck.requirements.tags import NOT_AUTOMATABLE
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 CORPUS_ROOT = Path(__file__).parent.parent.parent.parent / "conformance-vectors" / "a2a-jcs-v01"
@@ -88,6 +96,8 @@ VECTORS = _load_vectors()
 
 ACCEPT_VECTORS = [v for v in VECTORS if v["disposition"] == "MUST-ACCEPT"]
 REJECT_VECTORS = [v for v in VECTORS if v["disposition"] == "MUST-REJECT"]
+RULE3_VECTORS = [v for v in VECTORS if v["clause"] == SIGNATURES_EXCLUSION_CLAUSE]
+RULE3_REJECT_VECTORS = [v for v in RULE3_VECTORS if v["disposition"] == "MUST-REJECT"]
 
 
 def _canonicalize_vector_input(vector: dict[str, Any]) -> bytes:
@@ -102,6 +112,27 @@ def _canonicalize_vector_input(vector: dict[str, Any]) -> bytes:
     if vector["clause"] == SIGNATURES_EXCLUSION_CLAUSE:
         return canonicalize_agent_card(vector["input"])
     return canonicalize(vector["input"])
+
+
+def _rule3_verdict(vector: dict[str, Any], signing_bytes: Callable[[Any], bytes]) -> bool:
+    """Decide one rule-3 vector against a signing path.
+
+    A MUST-ACCEPT vector passes when the path produces the expected bytes.  A
+    MUST-REJECT vector presents bytes that still carry ``signatures`` as a
+    card's signing bytes; a verifier recomputes the signing bytes from the card
+    and refuses when they differ, so the vector passes when they differ.
+
+    Args:
+        vector: A vector whose clause is rule 3.
+        signing_bytes: The signing path under test.
+
+    Returns:
+        True when the signing path satisfies the vector.
+    """
+    if vector["disposition"] == "MUST-ACCEPT":
+        return signing_bytes(vector["input"]) == bytes.fromhex(vector["expected"]["canonical_utf8_hex"])
+    presented = vector["input_raw"].encode("utf-8")
+    return signing_bytes(json.loads(presented)) != presented
 
 
 class TestCorpusIntegrity:
@@ -244,18 +275,31 @@ class TestMustRejectVectors:
         with pytest.raises(CanonicalizationError):
             canonicalize(parsed)
 
-    @pytest.mark.parametrize(
-        "vector",
-        [v for v in REJECT_VECTORS if v["clause"] == SIGNATURES_EXCLUSION_CLAUSE],
-        ids=lambda v: v["id"],
-    )
-    def test_signatures_field_is_detected_in_signing_input(self, vector: dict[str, Any]) -> None:
-        """CARD-SIGN-002: a signing payload still carrying ``signatures`` is refused.
+    @pytest.mark.parametrize("vector", RULE3_REJECT_VECTORS, ids=lambda v: v["id"])
+    def test_signing_path_refuses_bytes_that_carry_signatures(self, vector: dict[str, Any]) -> None:
+        """CARD-SIGN-002: bytes that still carry ``signatures`` are not the card's signing bytes.
 
-        These vectors present already-canonical bytes that were signed without
-        the exclusion applied.  The field's presence is the whole defect, and
-        it must be detected whether the array is populated or empty.
+        These vectors present canonical bytes produced without the exclusion,
+        whether the array is populated or empty.  The verdict comes from the
+        TCK's signing path recomputing the bytes, never from looking for the
+        key in the fixture, which holds whatever the signing path does.
         """
-        parsed = json.loads(vector["input_raw"])
-        with pytest.raises(CanonicalizationError):
-            assert_signatures_excluded(parsed)
+        assert _rule3_verdict(vector, canonicalize_agent_card), (
+            f"{vector['id']}: the TCK signing path reproduced bytes that still carry 'signatures'"
+        )
+
+
+class TestNegativeControls:
+    """The rule-3 checks have to fail when rule 3 is removed."""
+
+    @pytest.mark.parametrize("vector", RULE3_VECTORS, ids=lambda v: v["id"])
+    def test_a_signing_path_that_keeps_signatures_fails_every_rule3_vector(self, vector: dict[str, Any]) -> None:
+        """CARD-SIGN-002: without the exclusion, each of the four rule-3 vectors fails.
+
+        ``canonicalize`` is the TCK's signing path with rule 3 removed.  Before
+        this control existed the two rejects passed against it, because their
+        check read the fixture.
+        """
+        assert not _rule3_verdict(vector, canonicalize), (
+            f"{vector['id']} passes against a signing path that keeps 'signatures', so it does not test rule 3"
+        )
