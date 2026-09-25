@@ -82,11 +82,11 @@ re-serialize the file with the same key order, then hash what remains.
 
 ## Signing
 
-This corpus is not signed yet, but the design is not hypothetical. A digest list covering every
-vector, signed offline with a static Ed25519 key committed beside the corpus and timestamped by an
-RFC 3161 authority, is what agent-evidence-vectors publishes across 461 vectors in 8 corpora at tag
-v0.10.1: https://github.com/astrogilda/agent-evidence-vectors. Nothing goes to a transparency log,
-so a consumer verifies offline. If signing lands here, that is the shape to copy.
+This corpus is not signed yet, but the design is not hypothetical. agent-evidence-vectors publishes
+it at tag v0.12.0: https://github.com/probityai/agent-evidence-vectors. A digest list covers every
+vector. It is signed offline with a static Ed25519 key committed beside the corpus, and an RFC 3161
+authority timestamps it. Nothing goes to a transparency log, so a consumer verifies offline. If
+signing lands here, that is the shape to copy.
 
 Signing status does not block use of this corpus today: both runners above check it in full without
 a signature, and a signature would add cryptographic proof that nobody altered a byte after
@@ -98,3 +98,8 @@ This corpus is offered at a2a-tck#227. giskard09 built their own canonicalizer, 
 the RFC 8785 text and has no tie to either a2a-python or a2a-js. They ran these 57 vectors blind
 against it on 2026-08-20, before opening the generators, and reported 57 of 57:
 https://github.com/a2aproject/a2a-tck/pull/228#issuecomment-5359047401.
+
+After commit 5cf977d made the rule-3 rejects run the implementation, giskard09 re-ran the corpus. The
+new harness refuses when the recomputed signing bytes differ from the presented ones. It reported
+57 of 57 again against argentum-core at f8c28c9, and all four A2 vectors fail when the signing path
+keeps the signatures field: https://github.com/a2aproject/a2a-tck/pull/228#issuecomment-5794700728.
