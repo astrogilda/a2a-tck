@@ -3,7 +3,6 @@
 from tck.canonicalization.jcs import (
     SIGNATURES_FIELD,
     CanonicalizationError,
-    assert_signatures_excluded,
     canonicalize,
     canonicalize_agent_card,
     signing_payload,
@@ -13,7 +12,6 @@ from tck.canonicalization.jcs import (
 __all__ = [
     "SIGNATURES_FIELD",
     "CanonicalizationError",
-    "assert_signatures_excluded",
     "canonicalize",
     "canonicalize_agent_card",
     "signing_payload",

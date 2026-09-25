@@ -4,25 +4,23 @@ Validates the Section 8.4.1 canonicalization rules against the Agent Card a
 server actually serves.
 
 Requirements tested:
-    CARD-SIGN-001, CARD-SIGN-002
+    CARD-SIGN-001
 
-Signing is optional for an A2A server (Section 8.4), so these tests skip when
-the served card carries no ``signatures`` array.  When it does, the card is
-held to the two rules that are decidable from the card alone:
+Signing is optional for an A2A server (Section 8.4), so this test skips when
+the served card carries no ``signatures`` array.  When it does, the card's
+signing payload must have an RFC 8785 canonical form at all.  A card carrying
+an unpaired surrogate, a non-finite number, or a value outside the JSON data
+model cannot have been canonicalized per RFC 8785, so whatever the server
+signed was not the canonical form of this card.
 
-* CARD-SIGN-001 -- the signing payload must have an RFC 8785 canonical form at
-  all.  A card carrying an unpaired surrogate, a non-finite number, or a value
-  outside the JSON data model cannot have been canonicalized per RFC 8785, so
-  whatever the server signed was not the canonical form of this card.
-* CARD-SIGN-002 -- the payload that gets signed must not carry the
-  ``signatures`` field, and the canonical bytes must be reachable while the
-  served card still carries it.
-
-Both checks are necessary conditions rather than proof of a correct signature.
-Confirming that the server signed *these* bytes means verifying the JWS, which
-needs a signature-verification dependency the TCK does not currently take; the
-byte-exact half of both requirements is carried by the a2a-jcs-v01 conformance
-corpus in ``tests/unit/canonicalization/test_jcs_vectors.py`` instead.
+That is the only Section 8.4.1 property decidable from the served card alone.
+Whether the server excluded ``signatures`` (CARD-SIGN-002) and canonicalized
+the bytes it signed is decided by verifying the JWS over the signing bytes the
+TCK computes, which needs a signature-verification dependency the TCK does not
+take yet.  A check that computes the signing bytes with the TCK's own functions
+and then inspects them passes for every server, so none is recorded here.  The
+TCK's signing-bytes computation itself is held to the a2a-jcs-v01 corpus in
+``tests/unit/canonicalization/test_jcs_vectors.py``.
 """
 
 from __future__ import annotations
@@ -34,9 +32,7 @@ import pytest
 from tck.canonicalization.jcs import (
     SIGNATURES_FIELD,
     CanonicalizationError,
-    assert_signatures_excluded,
     canonicalize_agent_card,
-    signing_payload,
 )
 from tck.requirements.registry import get_requirement_by_id
 from tests.compatibility.markers import core, must
@@ -51,7 +47,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 CARD_SIGN_001 = get_requirement_by_id("CARD-SIGN-001")
-CARD_SIGN_002 = get_requirement_by_id("CARD-SIGN-002")
 
 
 # ---------------------------------------------------------------------------
@@ -123,104 +118,14 @@ class TestAgentCardCanonicalization:
 
         errors: list[str] = []
         try:
-            canonical = canonicalize_agent_card(agent_card)
+            canonicalize_agent_card(agent_card)
         except CanonicalizationError as exc:
-            canonical = b""
             errors.append(
                 f"the served Agent Card has no RFC 8785 canonical form, so it "
                 f"cannot have been canonicalized before signing: {exc}"
             )
 
         valid = not errors
-        _record(collector=compatibility_collector, req=req,
-                passed=valid, errors=errors)
-        assert valid, _fail_msg(req, errors[0])
-        assert canonical, _fail_msg(req, "canonicalization produced no bytes")
-
-    def test_canonicalization_is_stable(
-        self,
-        agent_card: dict[str, Any],
-        compatibility_collector: Any,
-    ) -> None:
-        """CARD-SIGN-001: canonicalizing the served card twice yields identical bytes.
-
-        RFC 8785 exists to make one document produce one byte string.  A card
-        whose canonical form varies between runs cannot carry a signature that
-        verifies reliably, whatever the signature itself contains.
-        """
-        req = CARD_SIGN_001
-        _require_signatures(agent_card)
-
-        first = canonicalize_agent_card(agent_card)
-        second = canonicalize_agent_card(agent_card)
-
-        valid = first == second
-        errors = (
-            []
-            if valid
-            else [f"canonicalization is not deterministic: {first!r} then {second!r}"]
-        )
-        _record(collector=compatibility_collector, req=req,
-                passed=valid, errors=errors)
-        assert valid, _fail_msg(req, errors[0])
-
-
-# ---------------------------------------------------------------------------
-# Signatures exclusion (CARD-SIGN-002)
-# ---------------------------------------------------------------------------
-
-
-@must
-@core
-class TestAgentCardSignaturesExclusion:
-    """CARD-SIGN-002: Signatures field excluded from signed content."""
-
-    def test_signing_payload_excludes_signatures(
-        self,
-        agent_card: dict[str, Any],
-        compatibility_collector: Any,
-    ) -> None:
-        """CARD-SIGN-002: the signing payload drops the signatures field."""
-        req = CARD_SIGN_002
-        _require_signatures(agent_card)
-
-        payload = signing_payload(agent_card)
-        errors: list[str] = []
-        try:
-            assert_signatures_excluded(payload)
-        except CanonicalizationError as exc:
-            errors.append(str(exc))
-
-        valid = not errors
-        _record(collector=compatibility_collector, req=req,
-                passed=valid, errors=errors)
-        assert valid, _fail_msg(req, errors[0])
-
-    def test_canonical_bytes_omit_the_signatures_key(
-        self,
-        agent_card: dict[str, Any],
-        compatibility_collector: Any,
-    ) -> None:
-        """CARD-SIGN-002: the canonical signing bytes contain no signatures key.
-
-        Checked against the emitted bytes rather than the payload dict, because
-        the bytes are what a verifier actually re-derives and compares.
-        """
-        req = CARD_SIGN_002
-        _require_signatures(agent_card)
-
-        canonical = canonicalize_agent_card(agent_card)
-        marker = b'"' + SIGNATURES_FIELD.encode("utf-8") + b'":'
-
-        valid = marker not in canonical
-        errors = (
-            []
-            if valid
-            else [
-                f"canonical signing bytes still carry a {SIGNATURES_FIELD!r} key, "
-                f"which Section 8.4.1 rule 3 requires to be excluded"
-            ]
-        )
         _record(collector=compatibility_collector, req=req,
                 passed=valid, errors=errors)
         assert valid, _fail_msg(req, errors[0])

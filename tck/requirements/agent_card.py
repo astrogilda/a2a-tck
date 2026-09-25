@@ -139,9 +139,11 @@ AGENT_CARD_REQUIREMENTS: list[RequirementSpec] = [
         ),
         expected_behavior="Agent Card canonicalized per RFC 8785 before signing",
         spec_url=f"{SPEC_BASE}841-canonicalization-requirements",
-        # Covered by the a2a-jcs-v01 conformance corpus (groups A3 to A6) in
-        # tests/unit/canonicalization/test_jcs_vectors.py, and against a live
-        # server in tests/compatibility/agent_card/test_agent_card_signing.py.
+        # The TCK's canonicalizer is held to the a2a-jcs-v01 corpus in
+        # tests/unit/canonicalization/test_jcs_vectors.py. Against a live
+        # server, tests/compatibility/agent_card/test_agent_card_signing.py
+        # checks that the served card has a canonical form at all; whether the
+        # server signed those bytes needs the JWS verified (CARD-SIGN-003).
         tags=[AGENT_CARD, SIGNING, JCS],
     ),
     RequirementSpec(
@@ -155,9 +157,11 @@ AGENT_CARD_REQUIREMENTS: list[RequirementSpec] = [
         ),
         expected_behavior="Signatures field excluded from signing payload",
         spec_url=f"{SPEC_BASE}841-canonicalization-requirements",
-        # Covered by the a2a-jcs-v01 conformance corpus (group A2) in
-        # tests/unit/canonicalization/test_jcs_vectors.py, and against a live
-        # server in tests/compatibility/agent_card/test_agent_card_signing.py.
+        # The TCK's signing-bytes computation is held to the a2a-jcs-v01 corpus
+        # (group A2, with a negative control) in
+        # tests/unit/canonicalization/test_jcs_vectors.py. Against a live
+        # server this is decided only by verifying the JWS over those bytes,
+        # so no live test records it yet.
         tags=[AGENT_CARD, SIGNING],
     ),
     RequirementSpec(

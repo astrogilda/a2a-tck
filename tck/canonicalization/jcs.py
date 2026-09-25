@@ -330,23 +330,3 @@ def canonicalize_agent_card(card: Mapping[str, Any]) -> bytes:
         CanonicalizationError: If the card has no canonical representation.
     """
     return canonicalize(signing_payload(card))
-
-
-def assert_signatures_excluded(payload: Mapping[str, Any]) -> None:
-    """Check that a prepared signing payload no longer carries ``signatures``.
-
-    Section 8.4.1 rule 3 makes a payload that still carries the field invalid
-    signing input, because signing it would create the circular dependency the
-    rule exists to prevent.
-
-    Args:
-        payload: The signing payload to check.
-
-    Raises:
-        CanonicalizationError: If the payload still carries the field.
-    """
-    if isinstance(payload, dict) and SIGNATURES_FIELD in payload:
-        raise CanonicalizationError(
-            f"signing payload still carries the {SIGNATURES_FIELD!r} field, which "
-            f"specification section 8.4.1 rule 3 requires to be excluded"
-        )
